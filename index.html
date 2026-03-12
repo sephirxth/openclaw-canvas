@@ -1,0 +1,1118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenClaw Canvas</title>
+<style>
+:root {
+  --bg:#0a0c10; --surface:#13161c; --surface2:#1a1e26;
+  --border:rgba(255,255,255,.08); --border-hi:rgba(255,255,255,.16);
+  --text:#e8ecee; --muted:#7a858a; --subtle:#505a60;
+  --cyan:#7cc4e4; --teal:#5ccab4; --green:#8ad860;
+  --amber:#e8b84c; --red:#e86458; --purple:#a78bfa; --blue:#6c8cff;
+  --node-bg:rgba(16,19,26,.92); --node-border:rgba(255,255,255,.06);
+  --node-header:rgba(20,24,32,.95);
+}
+* { box-sizing:border-box; margin:0; padding:0; }
+body { background:var(--bg); color:var(--text); font-family:'SF Pro Text','PingFang SC','Segoe UI',sans-serif; overflow:hidden; height:100vh; }
+
+/* Toolbar */
+#toolbar {
+  position:fixed; top:0; left:0; right:0; height:40px; z-index:200;
+  background:rgba(10,12,16,.88); backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--border);
+  display:flex; align-items:center; padding:0 16px; gap:12px; font-size:12px;
+}
+#toolbar .brand { color:var(--cyan); font-weight:700; font-size:13px; letter-spacing:.5px; }
+#toolbar .sep { width:1px; height:18px; background:var(--border); }
+#toolbar .info { color:var(--muted); }
+#toolbar .zoom-ctrl { display:flex; gap:4px; margin-left:auto; }
+#toolbar .zoom-ctrl button {
+  background:var(--surface); border:1px solid var(--border); color:var(--muted);
+  border-radius:6px; width:28px; height:26px; cursor:pointer; font-size:13px;
+}
+#toolbar .zoom-ctrl button:hover { border-color:var(--border-hi); color:var(--text); }
+#toolbar .zoom-label { color:var(--subtle); width:40px; text-align:center; line-height:26px; }
+
+/* Viewport */
+#viewport { position:fixed; top:40px; left:0; right:0; bottom:0; overflow:hidden; cursor:grab; }
+#viewport.panning { cursor:grabbing; }
+#canvas { position:absolute; top:0; left:0; transform-origin:0 0; will-change:transform; }
+
+/* Nodes */
+.node {
+  position:absolute; border-radius:14px; overflow:hidden;
+  background:var(--node-bg); border:1px solid var(--node-border);
+  box-shadow:0 8px 32px rgba(0,0,0,.28);
+  display:flex; flex-direction:column; min-width:180px; min-height:120px;
+  transition:box-shadow .15s;
+}
+.node:hover { box-shadow:0 12px 40px rgba(0,0,0,.4); }
+
+/* Resize handle */
+.node-resize {
+  position:absolute; bottom:0; right:0; width:18px; height:18px; cursor:nwse-resize; z-index:10;
+}
+.node-resize::after {
+  content:''; position:absolute; bottom:4px; right:4px;
+  width:8px; height:8px; border-right:2px solid var(--subtle); border-bottom:2px solid var(--subtle);
+  opacity:.4; transition:opacity .15s;
+}
+.node:hover .node-resize::after { opacity:.8; }
+.node-header {
+  padding:10px 14px; background:var(--node-header);
+  border-bottom:1px solid var(--border); cursor:move;
+  display:flex; align-items:center; gap:8px; user-select:none; flex-shrink:0;
+}
+.node-header .title { font-size:13px; font-weight:600; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.node-body { padding:10px 14px; flex:1; overflow-y:auto; font-size:12px; line-height:1.6; min-height:0; }
+.node-body::-webkit-scrollbar { width:4px; }
+.node-body::-webkit-scrollbar-thumb { background:var(--subtle); border-radius:2px; }
+
+/* Agent card specifics */
+.status-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+.status-dot.running { background:var(--green); box-shadow:0 0 8px var(--green); animation:pulse 1.5s infinite; }
+.status-dot.active { background:var(--cyan); }
+.status-dot.idle { background:var(--amber); }
+.status-dot.stale { background:var(--subtle); }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+.agent-row { display:flex; justify-content:space-between; padding:3px 0; }
+.agent-label { color:var(--muted); }
+.agent-value { color:var(--text); text-align:right; max-width:65%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.agent-value.live { color:var(--green); }
+.token-delta { color:var(--green); font-size:11px; margin-left:4px; }
+.agent-task { color:var(--cyan); font-size:11px; margin-top:4px; padding:6px 8px; background:rgba(124,196,228,.06); border-radius:8px; line-height:1.4; }
+.agent-blocker { color:var(--red); font-size:11px; margin-top:4px; padding:6px 8px; background:rgba(232,100,88,.06); border-radius:8px; }
+
+/* Token chart */
+.token-chart { margin:6px 0; border-radius:6px; overflow:hidden; background:rgba(0,0,0,.15); }
+.token-chart svg { display:block; }
+
+/* Agent mode button */
+.agent-mode-btn {
+  font-size:12px; padding:2px 6px; border-radius:4px; cursor:pointer; border:none;
+  background:transparent; color:var(--subtle); flex-shrink:0;
+}
+.agent-mode-btn:hover { color:var(--text); background:var(--surface); }
+.agent-mode-btn.active { background:var(--blue); color:#fff; }
+
+/* Config panel */
+.config-panel { display:flex; flex-direction:column; gap:8px; }
+.config-label { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-top:4px; }
+.config-textarea {
+  width:100%; background:var(--surface); border:1px solid var(--border); border-radius:6px;
+  color:var(--text); font-size:11px; padding:6px 8px; resize:vertical; font-family:'SF Mono','Menlo',monospace;
+  line-height:1.5; outline:none;
+}
+.config-textarea:focus { border-color:var(--blue); }
+.config-actions { display:flex; gap:6px; justify-content:flex-end; margin-top:4px; }
+.config-btn {
+  padding:4px 12px; border-radius:6px; font-size:11px; cursor:pointer; border:none;
+}
+.config-btn.save { background:var(--blue); color:#fff; }
+.config-btn.save:hover { opacity:.9; }
+.config-btn.cancel { background:var(--surface); color:var(--muted); border:1px solid var(--border); }
+.config-btn.cancel:hover { color:var(--text); }
+.model-info { font-size:11px; color:var(--muted); padding:4px 8px; background:rgba(255,255,255,.03); border-radius:6px; word-break:break-all; }
+
+/* Activity feed */
+.activity-toggle {
+  font-size:10px; color:var(--subtle); cursor:pointer; padding:4px 0; user-select:none;
+  display:flex; align-items:center; gap:4px;
+}
+.activity-toggle:hover { color:var(--cyan); }
+.activity-toggle .arrow { transition:transform .15s; display:inline-block; font-size:8px; }
+.activity-toggle .arrow.open { transform:rotate(90deg); }
+.activity-feed { margin-top:4px; }
+.activity-item {
+  padding:3px 0; border-left:2px solid var(--border); padding-left:8px; margin-bottom:3px;
+  font-size:10px; line-height:1.4;
+}
+.activity-item.msg { border-left-color:var(--cyan); }
+.activity-item.tool { border-left-color:var(--purple); }
+.activity-item.err { border-left-color:var(--red); }
+.activity-tool-name { color:var(--purple); font-weight:600; }
+.activity-text { color:var(--muted); word-break:break-word; }
+.activity-preview { color:var(--subtle); font-size:9px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; }
+
+/* Mount zone */
+.mount-zone {
+  border-top:1px solid var(--border); padding:8px 14px; flex-shrink:0;
+  background:rgba(10,12,16,.5); min-height:36px;
+}
+.mount-zone-title {
+  font-size:10px; color:var(--subtle); text-transform:uppercase; letter-spacing:.5px;
+  margin-bottom:4px; display:flex; align-items:center; gap:4px;
+}
+.mount-zone.drag-over {
+  background:rgba(108,140,255,.08); border-top:1px solid var(--blue);
+}
+.mount-zone .drop-hint {
+  display:none; text-align:center; padding:8px 0; font-size:11px; color:var(--blue);
+  border:1px dashed rgba(108,140,255,.3); border-radius:8px; margin-top:4px;
+}
+.interval-select {
+  margin-left:auto; background:var(--surface); border:1px solid var(--border); border-radius:4px;
+  color:var(--muted); font-size:10px; padding:1px 4px; cursor:pointer; outline:none;
+}
+.interval-select:hover { border-color:var(--border-hi); color:var(--text); }
+body.todo-dragging .mount-zone .drop-hint { display:block; }
+body.todo-dragging .mount-zone { background:rgba(108,140,255,.04); }
+
+.mounted-item {
+  display:flex; align-items:center; gap:6px; padding:4px 0; font-size:11px;
+  border-bottom:1px solid rgba(255,255,255,.03);
+}
+.mounted-item .mi-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+.mounted-item .mi-dot.pending { background:var(--amber); }
+.mounted-item .mi-dot.done { background:var(--green); }
+.mounted-item .mi-text { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mounted-item .mi-text.done { color:var(--green); }
+.mounted-item .mi-action {
+  font-size:10px; padding:2px 6px; border-radius:4px; cursor:pointer; border:none; flex-shrink:0;
+}
+.mi-action.review-btn { background:rgba(138,216,96,.12); color:var(--green); }
+.mi-action.review-btn:hover { background:rgba(138,216,96,.2); }
+.mi-action.remove-btn { background:rgba(255,255,255,.05); color:var(--muted); }
+.mi-action.remove-btn:hover { background:rgba(232,100,88,.12); color:var(--red); }
+
+/* TODO panel */
+.todo-filters { display:flex; gap:4px; flex-wrap:wrap; margin-bottom:8px; }
+.todo-tab {
+  padding:3px 8px; border-radius:6px; font-size:11px; cursor:pointer;
+  background:var(--surface); border:1px solid var(--border); color:var(--muted);
+}
+.todo-tab:hover { border-color:var(--border-hi); color:var(--text); }
+.todo-tab.active { background:var(--blue); color:#fff; border-color:var(--blue); }
+.todo-item {
+  display:flex; align-items:flex-start; gap:6px; padding:4px 0;
+  border-bottom:1px solid rgba(255,255,255,.03); font-size:12px;
+}
+.todo-grip {
+  cursor:grab; color:var(--subtle); font-size:11px; flex-shrink:0; margin-top:2px;
+  padding:2px; border-radius:3px; user-select:none; line-height:1;
+}
+.todo-grip:hover { color:var(--cyan); background:rgba(124,196,228,.08); }
+.todo-cb {
+  width:15px; height:15px; border:1.5px solid var(--subtle); border-radius:3px;
+  flex-shrink:0; margin-top:2px; cursor:pointer; display:flex; align-items:center; justify-content:center;
+}
+.todo-cb.checked { background:var(--green); border-color:var(--green); }
+.todo-cb.checked::after { content:'\2713'; font-size:10px; color:#000; font-weight:700; }
+.todo-text { flex:1; }
+.todo-text.checked-text { opacity:.35; text-decoration:line-through; }
+.tag { font-size:9px; padding:1px 5px; border-radius:3px; display:inline-block; margin-left:3px; }
+.tag-urgent { background:rgba(232,100,88,.15); color:var(--red); }
+.tag-solo { background:rgba(138,216,96,.12); color:var(--green); }
+.tag-needs { background:rgba(232,184,76,.12); color:var(--amber); }
+.tag-mainline { background:rgba(108,140,255,.12); color:var(--blue); }
+.tag-other { background:rgba(255,255,255,.05); color:var(--muted); }
+
+/* Cron panel */
+.cron-row {
+  display:flex; align-items:center; gap:8px; padding:6px 0;
+  border-bottom:1px solid rgba(255,255,255,.03);
+}
+.cron-name { flex:1; font-weight:500; }
+.cron-badge { font-size:10px; padding:2px 8px; border-radius:10px; font-weight:600; }
+.cron-badge.ok { background:rgba(138,216,96,.12); color:var(--green); }
+.cron-badge.error { background:rgba(232,100,88,.12); color:var(--red); }
+.cron-badge.disabled { background:rgba(255,255,255,.05); color:var(--subtle); }
+.cron-schedule { color:var(--muted); font-size:11px; }
+.cron-detail { font-size:10px; color:var(--subtle); margin-top:2px; }
+.cron-error-text { font-size:10px; color:var(--red); opacity:.7; margin-top:2px; word-break:break-all; }
+
+/* TODO inline edit */
+.todo-text-edit {
+  flex:1; background:var(--surface); border:1px solid var(--blue); border-radius:4px;
+  color:var(--text); font-size:12px; padding:2px 6px; outline:none; font-family:inherit;
+  line-height:1.5;
+}
+
+/* File node */
+.file-icon { font-size:28px; text-align:center; margin:8px 0; }
+.file-name { font-size:12px; color:var(--cyan); text-align:center; word-break:break-all; }
+.file-meta { font-size:10px; color:var(--muted); text-align:center; margin-top:4px; }
+.file-hint { font-size:10px; color:var(--subtle); text-align:center; margin-top:6px; }
+
+/* File drop overlay */
+#file-drop-overlay {
+  position:fixed; inset:0; z-index:400;
+  background:rgba(10,12,16,.7); backdrop-filter:blur(4px);
+  display:none; align-items:center; justify-content:center;
+}
+#file-drop-overlay.active { display:flex; }
+#file-drop-overlay .drop-box {
+  border:2px dashed var(--blue); border-radius:20px; padding:40px 60px;
+  color:var(--blue); font-size:16px; font-weight:600;
+}
+
+/* Drag ghost */
+#drag-ghost {
+  position:fixed; z-index:500; pointer-events:none; display:none;
+  background:rgba(108,140,255,.15); border:1px solid var(--blue); border-radius:8px;
+  padding:6px 12px; font-size:12px; color:var(--text); max-width:280px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  backdrop-filter:blur(8px); box-shadow:0 8px 24px rgba(0,0,0,.4);
+}
+
+/* Grid dots background */
+#viewport::before {
+  content:''; position:absolute; inset:0; pointer-events:none; z-index:0;
+  background-image:radial-gradient(circle, rgba(255,255,255,.04) 1px, transparent 1px);
+  background-size:30px 30px;
+}
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <span class="brand">OpenClaw Canvas</span>
+  <span class="sep"></span>
+  <span class="info" id="agent-count"></span>
+  <span class="info" id="refresh-info"></span>
+  <div class="zoom-ctrl">
+    <button onclick="zoomBy(-0.15)" title="Zoom out">-</button>
+    <span class="zoom-label" id="zoom-label">100%</span>
+    <button onclick="zoomBy(0.15)" title="Zoom in">+</button>
+    <button onclick="resetView()" title="Reset view">R</button>
+  </div>
+</div>
+
+<div id="viewport">
+  <div id="canvas"></div>
+</div>
+<div id="drag-ghost"></div>
+<div id="file-drop-overlay"><div class="drop-box">Drop files here</div></div>
+
+<script>
+// ── Canvas Engine ──
+
+const viewport = document.getElementById('viewport');
+const canvasEl = document.getElementById('canvas');
+const ghost = document.getElementById('drag-ghost');
+
+let panX = 0, panY = 0, scale = 1;
+let isPanning = false, panStartX = 0, panStartY = 0, panOriginX = 0, panOriginY = 0;
+let saveTimeout = null;
+
+function applyTransform() {
+  canvasEl.style.transform = `translate(${panX}px,${panY}px) scale(${scale})`;
+  document.getElementById('zoom-label').textContent = Math.round(scale * 100) + '%';
+}
+
+function zoomAt(delta, cx, cy) {
+  const rect = viewport.getBoundingClientRect();
+  const mx = cx - rect.left;
+  const my = cy - rect.top;
+  const wx = (mx - panX) / scale;
+  const wy = (my - panY) / scale;
+  scale = Math.max(0.15, Math.min(4, scale * (1 + delta)));
+  panX = mx - wx * scale;
+  panY = my - wy * scale;
+  applyTransform();
+}
+
+function zoomBy(d) {
+  const rect = viewport.getBoundingClientRect();
+  zoomAt(d, rect.left + rect.width / 2, rect.top + rect.height / 2);
+}
+
+function resetView() {
+  panX = 200; panY = 100; scale = 0.85;
+  applyTransform();
+}
+
+// Pan
+viewport.addEventListener('pointerdown', e => {
+  if (e.target.closest('.node-header') || e.target.closest('.node-body') || e.target.closest('.mount-zone')) return;
+  isPanning = true;
+  panStartX = e.clientX; panStartY = e.clientY;
+  panOriginX = panX; panOriginY = panY;
+  viewport.classList.add('panning');
+  viewport.setPointerCapture(e.pointerId);
+});
+viewport.addEventListener('pointermove', e => {
+  if (!isPanning) return;
+  panX = panOriginX + (e.clientX - panStartX);
+  panY = panOriginY + (e.clientY - panStartY);
+  applyTransform();
+});
+viewport.addEventListener('pointerup', () => {
+  if (isPanning) { isPanning = false; viewport.classList.remove('panning'); scheduleSave(); }
+});
+
+// Zoom (wheel) — let scrollable node-body handle its own scroll
+viewport.addEventListener('wheel', e => {
+  const body = e.target.closest('.node-body');
+  if (body) {
+    const atTop = body.scrollTop <= 0;
+    const atBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 1;
+    const scrollingDown = e.deltaY > 0;
+    if (body.scrollHeight > body.clientHeight && !(scrollingDown && atBottom) && !(!scrollingDown && atTop)) {
+      return;
+    }
+  }
+  e.preventDefault();
+  zoomAt(e.deltaY > 0 ? -0.08 : 0.08, e.clientX, e.clientY);
+  scheduleSave();
+}, {passive: false});
+
+// ── Node System ──
+
+let nodeState = {};
+let dataCache = {agents: [], todos: null, crons: [], assignments: [], tokenHistory: {}, agentConfigs: {}, agentActivity: {}};
+let agentViewMode = {};
+let activityExpanded = {};
+
+function scheduleSave() {
+  clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(saveCanvasState, 1000);
+}
+
+async function saveCanvasState() {
+  nodeState.viewport = {x: panX, y: panY, zoom: scale};
+  await fetch('/api/canvas', {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(nodeState),
+  });
+}
+
+function nodeById(id) { return (nodeState.nodes || []).find(n => n.id === id); }
+
+// Node drag
+function startNodeDrag(e, nodeId) {
+  e.stopPropagation();
+  const node = nodeById(nodeId);
+  if (!node) return;
+  const startX = e.clientX, startY = e.clientY;
+  const origX = node.x, origY = node.y;
+
+  function onMove(ev) {
+    node.x = origX + (ev.clientX - startX) / scale;
+    node.y = origY + (ev.clientY - startY) / scale;
+    const el = document.getElementById('node-' + nodeId);
+    if (el) { el.style.left = node.x + 'px'; el.style.top = node.y + 'px'; }
+  }
+  function onUp() {
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', onUp);
+    scheduleSave();
+  }
+  document.addEventListener('pointermove', onMove);
+  document.addEventListener('pointerup', onUp);
+}
+
+// ── Node Resize ──
+
+function startNodeResize(e, nodeId) {
+  e.stopPropagation();
+  e.preventDefault();
+  const node = nodeById(nodeId);
+  if (!node) return;
+  const el = document.getElementById('node-' + nodeId);
+  const startX = e.clientX, startY = e.clientY;
+  const origW = node.w, origH = node.h || el.offsetHeight;
+
+  function onMove(ev) {
+    node.w = Math.max(180, origW + (ev.clientX - startX) / scale);
+    node.h = Math.max(120, origH + (ev.clientY - startY) / scale);
+    el.style.width = node.w + 'px';
+    el.style.height = node.h + 'px';
+  }
+  function onUp() {
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', onUp);
+    renderAllNodes();
+    scheduleSave();
+  }
+  document.addEventListener('pointermove', onMove);
+  document.addEventListener('pointerup', onUp);
+}
+
+// ── Todo Inline Edit ──
+
+function startTodoEdit(e, todoId) {
+  e.stopPropagation();
+  const span = e.currentTarget;
+  const todo = (dataCache.todos?.todos || []).find(t => t.id === todoId);
+  if (!todo || todo.checked) return;
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'todo-text-edit';
+  input.value = todo.text;
+  span.replaceWith(input);
+  input.focus();
+  input.select();
+
+  function commit() {
+    const newText = input.value.trim();
+    if (newText && newText !== todo.text) {
+      updateTodoText(todoId, newText);
+    } else {
+      renderAllNodes();
+    }
+  }
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', ev => {
+    if (ev.key === 'Enter') { ev.preventDefault(); input.blur(); }
+    if (ev.key === 'Escape') { input.value = todo.text; input.blur(); }
+  });
+}
+
+async function updateTodoText(todoId, newText) {
+  await fetch(`/api/todos/edit/${todoId}`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({text: newText}),
+  });
+  await fetchTodos();
+  renderAllNodes();
+}
+
+// ── Todo Drag-and-Drop to Agent Mount Zone ──
+
+let todoDragData = null;
+
+function findMountZone(els) {
+  for (const el of els) {
+    const mz = el.classList?.contains('mount-zone') ? el : el.closest?.('.mount-zone');
+    if (mz) return mz;
+  }
+  return null;
+}
+
+function startTodoDrag(e, todoId, todoText) {
+  e.stopPropagation();
+  e.preventDefault();
+  todoDragData = {id: todoId, text: todoText};
+  ghost.textContent = todoText.replace(/\*\*/g, '').replace(/`[^`]+`/g, '').substring(0, 50);
+  ghost.style.display = 'block';
+  ghost.style.left = e.clientX + 12 + 'px';
+  ghost.style.top = e.clientY - 10 + 'px';
+  document.body.classList.add('todo-dragging');
+
+  function onMove(ev) {
+    ghost.style.left = ev.clientX + 12 + 'px';
+    ghost.style.top = ev.clientY - 10 + 'px';
+    document.querySelectorAll('.mount-zone').forEach(mz => mz.classList.remove('drag-over'));
+    const mz = findMountZone(document.elementsFromPoint(ev.clientX, ev.clientY));
+    if (mz) mz.classList.add('drag-over');
+  }
+
+  function onUp(ev) {
+    ghost.style.display = 'none';
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', onUp);
+
+    // Hit-test BEFORE removing todo-dragging class (drop-hint visibility affects zone size)
+    const mz = findMountZone(document.elementsFromPoint(ev.clientX, ev.clientY));
+
+    document.body.classList.remove('todo-dragging');
+    document.querySelectorAll('.mount-zone').forEach(z => z.classList.remove('drag-over'));
+
+    if (mz && todoDragData) {
+      const agentId = mz.dataset.agentId;
+      if (agentId) createAssignment(agentId, todoDragData.id, todoDragData.text);
+    }
+    todoDragData = null;
+  }
+
+  document.addEventListener('pointermove', onMove);
+  document.addEventListener('pointerup', onUp);
+}
+
+async function createAssignment(agentId, todoId, todoText) {
+  await fetch('/api/assignments', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({agent_id: agentId, todo_id: todoId, todo_text: todoText}),
+  });
+  await fetchAssignments();
+  renderAllNodes();
+}
+
+async function reviewAssignment(id) {
+  await fetch(`/api/assignments/${id}/review`, {method: 'POST'});
+  await fetchAssignments();
+  renderAllNodes();
+}
+
+async function removeAssignment(id) {
+  await fetch(`/api/assignments/${id}`, {method: 'DELETE'});
+  await fetchAssignments();
+  renderAllNodes();
+}
+
+// ── Agent Config ──
+
+function toggleAgentMode(aid) {
+  agentViewMode[aid] = agentViewMode[aid] === 'config' ? 'info' : 'config';
+  if (agentViewMode[aid] === 'config' && !dataCache.agentConfigs[aid]) {
+    fetchAgentConfig(aid);
+  }
+  renderAllNodes();
+}
+
+async function fetchAgentConfig(aid) {
+  try {
+    const r = await fetch(`/api/agents/${aid}/config`);
+    dataCache.agentConfigs[aid] = await r.json();
+    renderAllNodes();
+  } catch(e) {}
+}
+
+async function saveAgentConfigFromUI(aid) {
+  const soulEl = document.getElementById(`cfg-soul-${aid}`);
+  const todoEl = document.getElementById(`cfg-todo-${aid}`);
+  const body = {};
+  if (soulEl) body.soul = soulEl.value;
+  if (todoEl) body.todo = todoEl.value;
+  await fetch(`/api/agents/${aid}/config`, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  delete dataCache.agentConfigs[aid];
+  agentViewMode[aid] = 'info';
+  renderAllNodes();
+}
+
+// ── Agent Activity ──
+
+function toggleActivity(aid) {
+  activityExpanded[aid] = !activityExpanded[aid];
+  if (activityExpanded[aid] && !dataCache.agentActivity[aid]) {
+    fetchAgentActivity(aid);
+  }
+  renderAllNodes();
+}
+
+async function fetchAgentActivity(aid) {
+  try {
+    const r = await fetch(`/api/agents/${aid}/activity?n=8`);
+    const d = await r.json();
+    dataCache.agentActivity[aid] = d.activity || [];
+    renderAllNodes();
+  } catch(e) {}
+}
+
+async function fetchAllActivity() {
+  // Fetch activity only for agents with expanded panels or running status
+  const promises = [];
+  for (const agent of dataCache.agents) {
+    if (activityExpanded[agent.agent_id] || agent.status === 'running') {
+      promises.push(fetchAgentActivity(agent.agent_id));
+    }
+  }
+  await Promise.all(promises);
+}
+
+function renderActivityFeed(aid) {
+  const items = dataCache.agentActivity[aid] || [];
+  if (!items.length) return '<div class="activity-text" style="padding:4px 0">No recent activity</div>';
+
+  let html = '';
+  for (const item of items) {
+    if (item.type === 'message') {
+      html += `<div class="activity-item msg"><div class="activity-text">${escHtml(item.text)}</div></div>`;
+    } else if (item.type === 'tool_call') {
+      html += `<div class="activity-item tool"><span class="activity-tool-name">${escHtml(item.tool)}</span></div>`;
+    } else if (item.type === 'tool_result') {
+      const cls = item.error ? 'err' : 'tool';
+      html += `<div class="activity-item ${cls}"><span class="activity-tool-name">${escHtml(item.tool)}</span>`;
+      if (item.preview) html += `<div class="activity-preview">${escHtml(item.preview)}</div>`;
+      html += `</div>`;
+    }
+  }
+  return html;
+}
+
+// ── Task Check Interval ──
+
+async function setTaskInterval(aid, nodeId, minutes) {
+  const node = nodeById(nodeId);
+  if (node) {
+    node.config = node.config || {};
+    node.config.task_check_minutes = parseInt(minutes);
+  }
+  await fetch(`/api/agents/${aid}/task-interval`, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({minutes: parseInt(minutes)}),
+  });
+  scheduleSave();
+}
+
+// ── TODO Add/Delete ──
+
+async function addTodoItem(text) {
+  if (!text.trim()) return;
+  await fetch('/api/todos/add', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({text: text.trim()}),
+  });
+  await fetchTodos();
+  renderAllNodes();
+}
+
+async function deleteTodoItem(todoId) {
+  await fetch(`/api/todos/delete/${todoId}`, {method: 'DELETE'});
+  await fetchTodos();
+  renderAllNodes();
+}
+
+function showAddTodoInput() {
+  const container = document.getElementById('todo-add-row');
+  if (!container) return;
+  container.innerHTML = `<input type="text" class="todo-text-edit" id="todo-new-input" placeholder="New task..." style="width:100%">`;
+  const input = document.getElementById('todo-new-input');
+  input.focus();
+  input.addEventListener('keydown', ev => {
+    if (ev.key === 'Enter') { addTodoItem(input.value); }
+    if (ev.key === 'Escape') { renderAllNodes(); }
+  });
+  input.addEventListener('blur', () => { if (input.value.trim()) addTodoItem(input.value); else renderAllNodes(); });
+}
+
+// ── Token Chart ──
+
+function renderTokenChartSVG(aid, series, chartW) {
+  const ml = 40, mr = 4, mt = 4, mb = 16; // margins: left, right, top, bottom
+  const totalW = Math.max(120, chartW || 250);
+  const totalH = 70;
+  const pw = totalW - ml - mr; // plot width
+  const ph = totalH - mt - mb; // plot height
+
+  const vals = series.map(p => p.total);
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const range = max - min || 1;
+
+  const pts = series.map((p, i) => {
+    const x = ml + (i / (series.length - 1)) * pw;
+    const y = mt + ph - ((p.total - min) / range) * (ph - 4);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+
+  const safeId = aid.replace(/[^a-zA-Z0-9]/g, '_');
+
+  // Format helpers
+  const fmtK = v => v >= 1e6 ? (v/1e6).toFixed(1)+'M' : (v/1000).toFixed(0)+'K';
+  const fmtTime = ts => {
+    const d = new Date(ts);
+    return d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
+  };
+
+  // Y-axis labels (max, mid, min)
+  const mid = (min + max) / 2;
+  const yMax = mt + 6;
+  const yMid = mt + ph / 2 + 3;
+  const yMin = mt + ph - 1;
+  const yLabels = `
+    <text x="${ml-3}" y="${yMax}" text-anchor="end" fill="#505a60" font-size="8">${fmtK(max)}</text>
+    <text x="${ml-3}" y="${yMid}" text-anchor="end" fill="#505a60" font-size="8">${fmtK(mid)}</text>
+    <text x="${ml-3}" y="${yMin}" text-anchor="end" fill="#505a60" font-size="8">${fmtK(min)}</text>`;
+
+  // X-axis labels (start, end)
+  const t0 = series[0]?.ts, t1 = series[series.length-1]?.ts;
+  const xLabels = t0 && t1 ? `
+    <text x="${ml}" y="${totalH-2}" text-anchor="start" fill="#505a60" font-size="8">${fmtTime(t0)}</text>
+    <text x="${totalW - mr}" y="${totalH-2}" text-anchor="end" fill="#505a60" font-size="8">${fmtTime(t1)}</text>` : '';
+
+  // Horizontal grid lines
+  const gridY1 = mt, gridY2 = mt + ph/2, gridY3 = mt + ph;
+  const grid = `
+    <line x1="${ml}" y1="${gridY1}" x2="${totalW-mr}" y2="${gridY1}" stroke="#505a60" stroke-opacity="0.15" stroke-dasharray="2,3"/>
+    <line x1="${ml}" y1="${gridY2}" x2="${totalW-mr}" y2="${gridY2}" stroke="#505a60" stroke-opacity="0.15" stroke-dasharray="2,3"/>
+    <line x1="${ml}" y1="${gridY3}" x2="${totalW-mr}" y2="${gridY3}" stroke="#505a60" stroke-opacity="0.15"/>`;
+
+  const delta = vals[vals.length - 1] - vals[0];
+  const deltaStr = delta > 0 ? `+${(delta / 1000).toFixed(1)}K` : '';
+
+  return `<div class="token-chart">
+    <svg width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}">
+      <defs><linearGradient id="tg_${safeId}" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#7cc4e4" stop-opacity="0.2"/>
+        <stop offset="100%" stop-color="#7cc4e4" stop-opacity="0"/>
+      </linearGradient></defs>
+      ${grid}${yLabels}${xLabels}
+      <polygon points="${ml},${mt+ph} ${pts.join(' ')} ${totalW-mr},${mt+ph}" fill="url(#tg_${safeId})" />
+      <polyline points="${pts.join(' ')}" fill="none" stroke="#7cc4e4" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+    </svg>
+    ${deltaStr ? `<div style="font-size:9px;color:var(--subtle);text-align:right;padding:0 4px">${deltaStr} / 1h</div>` : ''}
+  </div>`;
+}
+
+// ── Node Renderers ──
+
+const renderers = {};
+
+// Agent card
+renderers.agent = function(node, el) {
+  const aid = node.config?.agent_id;
+  const agent = dataCache.agents.find(a => a.agent_id === aid);
+  if (!agent) { el.querySelector('.node-body').innerHTML = '<span style="color:var(--muted)">Loading...</span>'; return; }
+
+  const t = agent.tokens || {};
+  const totalK = (t.total / 1000).toFixed(1);
+  const deltaK = t.delta_total > 0 ? '+' + (t.delta_total / 1000).toFixed(1) + 'K' : '';
+  const statusCls = agent.status || 'stale';
+  const mode = agentViewMode[aid] || 'info';
+
+  el.querySelector('.node-header').innerHTML = `
+    <div class="status-dot ${statusCls}"></div>
+    <span class="title">${agent.emoji || ''} ${agent.name}</span>
+    <span style="font-size:10px;color:var(--muted)">${statusCls}</span>
+    <button class="agent-mode-btn${mode === 'config' ? ' active' : ''}" onclick="toggleAgentMode('${aid}')" title="Config">&#9881;</button>`;
+
+  const body = el.querySelector('.node-body');
+
+  if (mode === 'info') {
+    let html = `<div class="agent-row"><span class="agent-label">Tokens</span><span class="agent-value${t.live ? ' live' : ''}">${totalK}K${deltaK ? '<span class="token-delta">' + deltaK + '</span>' : ''}</span></div>`;
+
+    // Token chart
+    const series = (dataCache.tokenHistory || {})[aid];
+    if (series && series.length >= 2) {
+      html += renderTokenChartSVG(aid, series, node.w ? node.w - 28 : 250);
+    }
+
+    if (agent.task) html += `<div class="agent-task">${escHtml(truncate(agent.task, 80))}</div>`;
+    if (agent.blocker) html += `<div class="agent-blocker">Blocked: ${escHtml(truncate(agent.blocker, 60))}</div>`;
+
+    // Activity feed
+    const expanded = activityExpanded[aid];
+    const arrowCls = expanded ? 'arrow open' : 'arrow';
+    html += `<div class="activity-toggle" onclick="toggleActivity('${aid}')"><span class="${arrowCls}">&#9654;</span> Activity</div>`;
+    if (expanded) {
+      html += `<div class="activity-feed">${renderActivityFeed(aid)}</div>`;
+    }
+
+    body.innerHTML = html;
+  } else {
+    // Config mode
+    const cfg = dataCache.agentConfigs[aid];
+    if (!cfg) {
+      body.innerHTML = '<span style="color:var(--muted)">Loading config...</span>';
+      fetchAgentConfig(aid);
+      return;
+    }
+
+    let html = '<div class="config-panel">';
+    html += `<div class="config-label">SOUL.md</div>`;
+    html += `<textarea class="config-textarea" id="cfg-soul-${aid}" rows="5">${escHtml(cfg.soul || '')}</textarea>`;
+
+    if (cfg.todo) {
+      html += `<div class="config-label">TODO.md</div>`;
+      html += `<textarea class="config-textarea" id="cfg-todo-${aid}" rows="4">${escHtml(cfg.todo || '')}</textarea>`;
+    }
+
+    html += `<div class="config-label">Model</div>`;
+    const model = cfg.model || {};
+    const primary = model.primary || 'default';
+    html += `<div class="model-info">${escHtml(typeof primary === 'string' ? primary : JSON.stringify(primary))}</div>`;
+
+    html += `<div class="config-actions">`;
+    html += `<button class="config-btn cancel" onclick="toggleAgentMode('${aid}')">Cancel</button>`;
+    html += `<button class="config-btn save" onclick="saveAgentConfigFromUI('${aid}')">Save</button>`;
+    html += `</div></div>`;
+    body.innerHTML = html;
+  }
+
+  // Mount zone
+  const myAssignments = dataCache.assignments.filter(a => a.agent_id === aid);
+  const pending = myAssignments.filter(a => a.status === 'pending');
+  const done = myAssignments.filter(a => a.status === 'done');
+
+  const curInterval = node.config?.task_check_minutes || 60;
+  const intervals = [{v:15,l:'15m'},{v:30,l:'30m'},{v:60,l:'1h'},{v:120,l:'2h'},{v:240,l:'4h'}];
+  let mountHtml = `<div class="mount-zone-title">
+    <span>Mounted Tasks (${pending.length + done.length})</span>
+    <select class="interval-select" onchange="setTaskInterval('${aid}','${node.id}',this.value)" title="Task check interval">
+      ${intervals.map(i => `<option value="${i.v}"${i.v===curInterval?' selected':''}>${i.l}</option>`).join('')}
+    </select>
+  </div>`;
+
+  done.forEach(a => {
+    mountHtml += `<div class="mounted-item">
+      <div class="mi-dot done"></div>
+      <span class="mi-text done">${escHtml(truncate(a.todo_text, 40))}</span>
+      <button class="mi-action review-btn" onclick="reviewAssignment('${a.id}')" title="Mark reviewed">OK</button>
+      <button class="mi-action remove-btn" onclick="removeAssignment('${a.id}')" title="Remove">x</button>
+    </div>`;
+  });
+
+  pending.forEach(a => {
+    mountHtml += `<div class="mounted-item">
+      <div class="mi-dot pending"></div>
+      <span class="mi-text">${escHtml(truncate(a.todo_text, 40))}</span>
+      <button class="mi-action remove-btn" onclick="removeAssignment('${a.id}')" title="Remove">x</button>
+    </div>`;
+  });
+
+  mountHtml += `<div class="drop-hint">Drop task here</div>`;
+  el.querySelector('.mount-zone').innerHTML = mountHtml;
+
+  // Auto-expand height if mount zone has items
+  if (myAssignments.length > 0) {
+    const minH = 280 + myAssignments.length * 28;
+    if ((node.h || 200) < minH) {
+      node.h = minH;
+      el.style.height = node.h + 'px';
+    }
+  }
+};
+
+// TODO panel
+let todoFilter = 'active';
+
+renderers.todo = function(node, el) {
+  const data = dataCache.todos;
+  if (!data) { el.querySelector('.node-body').innerHTML = '<span style="color:var(--muted)">Loading...</span>'; return; }
+
+  el.querySelector('.node-header').innerHTML = `<span class="title">TODO</span><span style="font-size:10px;color:var(--muted)">${data.total} items</span>
+    <button class="agent-mode-btn" onclick="showAddTodoInput()" title="Add task">+</button>`;
+
+  let todos = data.todos || [];
+  if (todoFilter === 'active') todos = todos.filter(t => !t.checked);
+  else if (todoFilter === 'urgent') todos = todos.filter(t => t.urgent && !t.checked);
+  else if (todoFilter === 'solo') todos = todos.filter(t => t.solo && !t.checked);
+  else if (todoFilter === 'needs') todos = todos.filter(t => t.needs_youyuan && !t.checked);
+
+  const tabs = [
+    {key:'active', label:'Active'},
+    {key:'urgent', label:`Urgent(${data.urgent})`},
+    {key:'solo', label:`Solo(${data.solo})`},
+    {key:'needs', label:`Needs(${data.needs_youyuan})`},
+    {key:'all', label:'All'},
+  ];
+
+  let html = '<div class="todo-filters">';
+  tabs.forEach(t => {
+    html += `<span class="todo-tab${todoFilter===t.key?' active':''}" onclick="setTodoFilter('${t.key}')">${t.label}</span>`;
+  });
+  html += '</div>';
+
+  todos.slice(0, 40).forEach(t => {
+    const checkedCls = t.checked ? ' checked' : '';
+    const textCls = t.checked ? ' checked-text' : '';
+    let display = t.text.replace(/\*\*/g, '').replace(/`[^`]+`/g, '');
+    let tagHtml = '';
+    t.tags.forEach(tag => {
+      let cls = 'tag-other';
+      if (tag === 'urgent') cls = 'tag-urgent';
+      else if (tag === 'luna:solo') cls = 'tag-solo';
+      else if (tag === 'needs:youyuan') cls = 'tag-needs';
+      else if (tag.startsWith('main:')) cls = 'tag-mainline';
+      tagHtml += `<span class="tag ${cls}">${tag}</span>`;
+    });
+    const gripAttr = t.checked ? '' : ` onpointerdown="startTodoDrag(event,${t.id},${JSON.stringify(t.text).replace(/"/g, '&quot;')})"`;
+    html += `<div class="todo-item">
+      <span class="todo-grip"${gripAttr}>\u2801\u2801</span>
+      <div class="todo-cb${checkedCls}" onclick="toggleTodo(${t.id})"></div>
+      <span class="todo-text${textCls}" ondblclick="startTodoEdit(event,${t.id})">${escHtml(display)}${tagHtml}</span>
+      <button class="mi-action remove-btn" onclick="deleteTodoItem(${t.id})" title="Delete" style="font-size:9px;padding:1px 4px">x</button>
+    </div>`;
+  });
+  if (todos.length > 40) html += `<div style="color:var(--muted);text-align:center;padding:8px">+${todos.length - 40} more</div>`;
+  if (!todos.length) html += '<div style="color:var(--muted);text-align:center;padding:16px">No items</div>';
+  html += '<div id="todo-add-row"></div>';
+
+  el.querySelector('.node-body').innerHTML = html;
+};
+
+// Cron panel
+renderers.cron = function(node, el) {
+  const jobs = dataCache.crons;
+  el.querySelector('.node-header').innerHTML = `<span class="title">Cron Jobs</span><span style="font-size:10px;color:var(--muted)">${jobs.length} jobs</span>`;
+
+  if (!jobs.length) { el.querySelector('.node-body').innerHTML = '<span style="color:var(--muted)">No jobs</span>'; return; }
+
+  let html = '';
+  jobs.forEach(j => {
+    let badge = 'disabled', badgeCls = 'disabled';
+    if (!j.enabled) { badge = 'OFF'; }
+    else if (j.last_status === 'ok') { badge = 'OK'; badgeCls = 'ok'; }
+    else if (j.last_status === 'error') { badge = 'ERR'; badgeCls = 'error'; }
+    else { badge = '--'; }
+
+    const dur = j.last_duration_ms ? (j.last_duration_ms / 1000).toFixed(0) + 's' : '--';
+    const errs = j.consecutive_errors || 0;
+    const errInfo = errs > 0 ? ` <span style="color:var(--red)">${errs}x</span>` : '';
+
+    html += `<div class="cron-row">
+      <span class="cron-name">${escHtml(j.name)}</span>
+      <span class="cron-schedule">${escHtml(j.schedule_expr)}</span>
+      <span class="cron-badge ${badgeCls}">${badge}</span>
+    </div>`;
+    if (j.agent_id) html += `<div class="cron-detail">agent: ${j.agent_id} | ${dur}${errInfo}</div>`;
+    if (j.last_error && errs > 0) html += `<div class="cron-error-text">${escHtml(truncate(j.last_error, 100))}</div>`;
+  });
+  el.querySelector('.node-body').innerHTML = html;
+};
+
+// File node
+renderers.file = function(node, el) {
+  const f = node.config || {};
+  const ext = (f.name || '').split('.').pop().toLowerCase();
+  const icons = {pdf:'\uD83D\uDCC4', md:'\uD83D\uDCDD', png:'\uD83D\uDDBC', jpg:'\uD83D\uDDBC', jpeg:'\uD83D\uDDBC', gif:'\uD83D\uDDBC', svg:'\uD83D\uDDBC', webp:'\uD83D\uDDBC'};
+  const icon = icons[ext] || '\uD83D\uDCC1';
+  const sizeStr = f.size ? (f.size < 1024 ? f.size + 'B' : (f.size / 1024).toFixed(1) + 'KB') : '';
+
+  el.querySelector('.node-header').innerHTML = `<span class="title">${escHtml(f.name || 'File')}</span>`;
+
+  let body = `<div class="file-icon">${icon}</div>`;
+  body += `<div class="file-name">${escHtml(f.name || '')}</div>`;
+  if (sizeStr) body += `<div class="file-meta">${sizeStr}</div>`;
+  body += `<div class="file-hint">Double-click to open</div>`;
+
+  if (['png','jpg','jpeg','gif','webp','svg'].includes(ext) && f.path) {
+    body = `<div style="text-align:center;padding:4px"><img src="/api/files/preview?path=${encodeURIComponent(f.path)}" style="max-width:100%;max-height:160px;border-radius:6px;"></div>` + `<div class="file-name">${escHtml(f.name)}</div>`;
+  }
+
+  el.querySelector('.node-body').innerHTML = body;
+
+  el.ondblclick = (e) => {
+    if (e.target.closest('.node-header') || e.target.closest('.node-resize')) return;
+    if (f.path) window.open(`/api/files/open?path=${encodeURIComponent(f.path)}`, '_blank');
+  };
+};
+
+// ── File Drop from OS ──
+
+const fileOverlay = document.getElementById('file-drop-overlay');
+let dragCounter = 0;
+
+document.addEventListener('dragenter', e => {
+  e.preventDefault();
+  if (e.dataTransfer?.types?.includes('Files')) {
+    dragCounter++;
+    fileOverlay.classList.add('active');
+  }
+});
+document.addEventListener('dragleave', e => {
+  dragCounter--;
+  if (dragCounter <= 0) { dragCounter = 0; fileOverlay.classList.remove('active'); }
+});
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', async e => {
+  e.preventDefault();
+  dragCounter = 0;
+  fileOverlay.classList.remove('active');
+
+  const files = e.dataTransfer?.files;
+  if (!files || !files.length) return;
+
+  const rect = viewport.getBoundingClientRect();
+  const cx = (e.clientX - rect.left - panX) / scale;
+  const cy = (e.clientY - rect.top - panY) / scale;
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const form = new FormData();
+    form.append('file', file);
+    try {
+      const resp = await fetch('/api/files/upload', {method: 'POST', body: form});
+      const data = await resp.json();
+      if (data.path) {
+        const nodeId = 'file-' + Date.now() + '-' + i;
+        const isImg = /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(file.name);
+        nodeState.nodes.push({
+          id: nodeId, type: 'file',
+          x: cx + i * 30, y: cy + i * 30,
+          w: isImg ? 240 : 200, h: isImg ? 220 : 180,
+          config: {name: file.name, path: data.path, size: file.size},
+        });
+      }
+    } catch(err) { console.error('Upload failed:', err); }
+  }
+  renderAllNodes();
+  scheduleSave();
+});
+
+// ── Helpers ──
+
+function escHtml(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+function truncate(s, n) { return s && s.length > n ? s.substring(0, n) + '...' : (s || ''); }
+
+function setTodoFilter(f) { todoFilter = f; renderAllNodes(); }
+
+async function toggleTodo(id) {
+  await fetch(`/api/todos/toggle/${id}`, {method:'POST'});
+  await fetchTodos();
+  renderAllNodes();
+}
+
+// ── Data Fetching ──
+
+async function fetchAgents() {
+  try { const r = await fetch('/api/agents'); const d = await r.json(); dataCache.agents = d.agents || []; } catch(e) {}
+}
+async function fetchTodos() {
+  try { const r = await fetch('/api/todos'); dataCache.todos = await r.json(); } catch(e) {}
+}
+async function fetchCrons() {
+  try { const r = await fetch('/api/crons'); const d = await r.json(); dataCache.crons = d.jobs || []; } catch(e) {}
+}
+async function fetchAssignments() {
+  try { const r = await fetch('/api/assignments'); const d = await r.json(); dataCache.assignments = d.assignments || []; } catch(e) {}
+}
+async function fetchTokenHistory() {
+  try { const r = await fetch('/api/tokens/history?range=1h'); const d = await r.json(); dataCache.tokenHistory = d.series || {}; } catch(e) {}
+}
+
+// ── Render Loop ──
+
+function ensureNodeElements() {
+  (nodeState.nodes || []).forEach(node => {
+    let el = document.getElementById('node-' + node.id);
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'node-' + node.id;
+      el.className = 'node';
+      const isAgent = node.type === 'agent';
+      el.innerHTML = `<div class="node-header" onpointerdown="startNodeDrag(event,'${node.id}')"></div><div class="node-body"></div>${isAgent ? `<div class="mount-zone" data-agent-id="${node.config?.agent_id || ''}"></div>` : ''}<div class="node-resize" onpointerdown="startNodeResize(event,'${node.id}')"></div>`;
+      canvasEl.appendChild(el);
+    }
+    el.style.left = node.x + 'px';
+    el.style.top = node.y + 'px';
+    el.style.width = node.w + 'px';
+    if (node.h) el.style.height = node.h + 'px';
+  });
+  const ids = new Set((nodeState.nodes || []).map(n => 'node-' + n.id));
+  canvasEl.querySelectorAll('.node').forEach(el => { if (!ids.has(el.id)) el.remove(); });
+}
+
+function renderAllNodes() {
+  ensureNodeElements();
+  (nodeState.nodes || []).forEach(node => {
+    const el = document.getElementById('node-' + node.id);
+    if (!el) return;
+    const renderer = renderers[node.type];
+    if (renderer) renderer(node, el);
+  });
+  const active = dataCache.agents.filter(a => a.status === 'running' || a.status === 'active').length;
+  document.getElementById('agent-count').textContent = `${dataCache.agents.length} agents (${active} active)`;
+}
+
+// ── Init ──
+
+async function init() {
+  try { const r = await fetch('/api/canvas'); nodeState = await r.json(); } catch(e) { nodeState = {viewport:{x:200,y:100,zoom:0.85}, nodes:[]}; }
+  const vp = nodeState.viewport || {};
+  panX = vp.x ?? 200; panY = vp.y ?? 100; scale = vp.zoom ?? 0.85;
+  applyTransform();
+
+  await Promise.all([fetchAgents(), fetchTodos(), fetchCrons(), fetchAssignments(), fetchTokenHistory()]);
+  renderAllNodes();
+
+  setInterval(async () => { await fetchAgents(); await fetchAssignments(); await fetchAllActivity(); renderAllNodes(); }, 12000);
+  setInterval(async () => { await fetchTodos(); renderAllNodes(); }, 30000);
+  setInterval(async () => { await fetchCrons(); renderAllNodes(); }, 60000);
+  setInterval(async () => { await fetchTokenHistory(); renderAllNodes(); }, 30000);
+
+  document.getElementById('refresh-info').textContent = 'agents:12s todos:30s cron:60s tokens:30s';
+}
+
+init();
+</script>
+</body>
+</html>
