@@ -90,6 +90,17 @@ Single-file backend (`server.py`) + single-file frontend (`index.html`). No buil
 - [OpenClaw](https://github.com/nicepkg/openclaw) installed and configured
 - Node.js (for JSON5 config parsing)
 
+
+## Related Projects
+
+| Project | What It Does |
+|---------|-------------|
+| [OpenClaw Agent Monitor](https://github.com/sephirxth/openclaw-agent-monitor) | Lightweight real-time agent activity dashboard — if you need a focused "is it working?" view instead of a full canvas |
+| [WitMani Game Animator](https://github.com/sephirxth/WitMani-game-animator) | AI sprite sheet generator — Claude Code plugin for game character animations |
+| [LLM Code Test](https://github.com/sephirxth/LLM_code_test) | Benchmark comparing Claude, Gemini, DeepSeek, Grok on code generation |
+
+[All projects →](https://github.com/sephirxth)
+
 ## License
 
 MIT
